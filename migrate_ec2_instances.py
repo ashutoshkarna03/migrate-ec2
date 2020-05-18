@@ -7,12 +7,6 @@ from pprint import pprint
 # load environment variables
 dotenv.load_dotenv()  # by default it takes .env file
 
-# create boto3 client for ec2 for both source and destination region
-client_src = boto3.client('ec2', region_name=os.getenv('SOURCE_REGION'))
-client_des = boto3.client('ec2', region_name=os.getenv('DESTINATION_REGION'))
-# create ec2 resource
-ec2 = boto3.resource('ec2', region_name=os.getenv('DESTINATION_REGION'))
-
 # function to get status of the given instance id
 def get_instance_details(instance_id, client):
     response = client.describe_instances(
@@ -37,7 +31,7 @@ def stop_instance(instance_id, client):
 def create_image_of_instance(instance_id, client):
     waiter = client.get_waiter('image_available')
     # call create_image to create AMI of given instance
-    response = client.create_image(InstanceId=instance_id, Name="Latest-image-of-" + instance_id)
+    response = client.create_image(InstanceId=instance_id, Name="latest-image-of-" + instance_id)
     print('Creating image, this may take few minutes...')
     waiter.wait(ImageIds=[response['ImageId']], DryRun=False)
     return response['ImageId']
@@ -47,8 +41,8 @@ def copy_image_to_destination_region(image_id, instance_id, client):
     source_region = os.getenv('SOURCE_REGION')
     # call copy_image to copy the AMI from source region to destination
     response = client.copy_image(
-        Description='copied image of instance: ' + instance_id + ' from region: ' + source_region,
-        Name='New image of instance ' + instance_id,
+        Description='Copied image of instance: ' + instance_id + ' from region: ' + source_region,
+        Name='new image of instance ' + instance_id,
         SourceImageId=image_id,
         SourceRegion=source_region,
     )
@@ -80,21 +74,41 @@ def launch_instance(image_id, instance_id, client_src, client_des, ec2_resource_
         print('Error in launching intance with error: ' + str(e))
         return dict(success=False, error_msg=str(e))
     
-    
-
-
-
+def migrate(instances_list):
+    # create boto3 client for ec2 for both source and destination region
+    client_src = boto3.client('ec2', region_name=os.getenv('SOURCE_REGION'))
+    client_des = boto3.client('ec2', region_name=os.getenv('DESTINATION_REGION'))
+    # create ec2 resource
+    ec2 = boto3.resource('ec2', region_name=os.getenv('DESTINATION_REGION'))
+    total_instances = len(instances_list)
+    # iterate through list of intances in source region to be migrated
+    for n, instance in enumerate(instances_list):
+        try:
+            print(str(n+1) + '/' + str(total_instances) + ': ' + instance)
+            # stop the source instance first, not mandatory but recommended, inorder to keep instance's integrity
+            stop_instance(instance_id=instance, client=client_src)
+            # create image of the source instance
+            image_id_src = create_image_of_instance(instance_id=instance, client=client_src)
+            print('Source image_id: ' + image_id_src)
+            # copy the image from source region to destination region (destination client is needed for this function)
+            image_id_des = copy_image_to_destination_region(image_id=image_id_src, instance_id=instance, client=client_des)
+            print('Destination image_id: ' + image_id_des)
+            result = launch_instance(
+                image_id=image_id_des,
+                instance_id=instance,
+                client_src=client_src,
+                client_des=client_des,
+                ec2_resource_des=ec2
+            )
+            if result['success']:
+                print('Migration of instance: ' + instance + ' completed successfully')
+            else:
+                print('Migration of instance: ' + instance + ' failed due to error: ' + result['error_msg'])
+        except Exception as e: 
+            print('Migration of instance: ' + instance + ' failed due to error: ' + str(e))
+        
 
 if __name__ == '__main__':
-    # print(get_instance_details('i-0258ceb7c8aed1e08', client_src))
-    image_id = 'ami-07aa3df10dae9a6b9'
-    # instance_id = 'i-0258ceb7c8aed1e08'
-    # print(create_image_of_instance('i-0258ceb7c8aed1e08', client_des))
-    # print(copy_image_to_destination_region(image_id, instance_id, client_des))
-    launch_instance(
-        instance_id='i-0258ceb7c8aed1e08',
-        image_id='ami-07aa3df10dae9a6b9',
-        client_src=client_src,
-        client_des=client_des,
-        ec2_resource_des=ec2
+    migrate(
+        instances_list = ['i-0258ceb7c8aed1e08',]
     )
