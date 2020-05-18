@@ -110,5 +110,5 @@ def migrate(instances_list):
 
 if __name__ == '__main__':
     migrate(
-        instances_list = ['i-0258ceb7c8aed1e08',]
+        instances_list = ['instance-id-1', 'instance-id-2', 'instance-id-3',]
     )
